@@ -1,14 +1,16 @@
 /**
- * Deno AI 生图网站 - 最终修复版
- * 修复点：将 HTML 模板字符串改为单引号，避免特殊字符解析错误
+ * Deno AI 生图网站 - 绝对修复版
+ * 修复点：使用 Unicode 转义字符 \u00D7 代替特殊符号，彻底解决构建报错
  */
 
+// --- 配置区域 ---
 const CONFIG = {
   BASE_URL: Deno.env.get("AI_BASE_URL") || "https://你的中转站地址/v1",
   API_KEY: Deno.env.get("AI_API_KEY") || "sk-你的API密钥",
   PORT: Number(Deno.env.get("PORT")) || 8000
 };
 
+// --- HTML 前端页面 ---
 const getHTML = () => `
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -65,6 +67,7 @@ const getHTML = () => `
                 return alert("请先输入描述词！");
             }
 
+            // UI 状态更新
             btn.disabled = true;
             btn.innerText = "绘制中...";
             resultArea.innerHTML = '<span class="loading">正在连接 AI 大脑，请稍候...</span>';
@@ -79,6 +82,7 @@ const getHTML = () => `
                 const data = await response.json();
 
                 if (data.success) {
+                    // 创建图片元素，预加载后再显示
                     const img = new Image();
                     img.src = data.url;
                     img.onload = () => {
@@ -86,12 +90,12 @@ const getHTML = () => `
                         resultArea.appendChild(img);
                     };
                 } else {
-                    // 修复点1：使用单引号包裹，并确保 &times; 安全
-                    resultArea.innerHTML = '<div class="error-msg">&times; 生成失败<br><small>' + data.error + '</small></div>';
+                    // 修复点：使用 Unicode \\u00D7 代替特殊字符
+                    resultArea.innerHTML = '<div class="error-msg">\\u00D7 生成失败<br><small>' + data.error + '</small></div>';
                 }
             } catch (err) {
-                // 修复点2：使用单引号包裹
-                resultArea.innerHTML = '<div class="error-msg">&times; 网络错误<br><small>' + err.message + '</small></div>';
+                // 修复点：使用 Unicode \\u00D7 代替特殊字符
+                resultArea.innerHTML = '<div class="error-msg">\\u00D7 网络错误<br><small>' + err.message + '</small></div>';
             } finally {
                 btn.disabled = false;
                 btn.innerText = "开始生成";
@@ -102,9 +106,11 @@ const getHTML = () => `
 </html>
 `;
 
+// --- HTTP 服务器逻辑 ---
 async function handler(req: Request): Promise<Response> {
   const url = new URL(req.url);
 
+  // 1. 首页
   if (req.method === "GET" && url.pathname === "/") {
     return new Response(getHTML(), {
       headers: {
@@ -114,10 +120,12 @@ async function handler(req: Request): Promise<Response> {
     });
   }
 
+  // 2. API 接口
   if (req.method === "POST" && url.pathname === "/api/generate") {
     try {
       const { prompt, model } = await req.json();
 
+      // 安全检查
       if (CONFIG.API_KEY === "sk-你的API密钥") {
          throw new Error("未配置 API_KEY，请在 Deno Deploy 环境变量中设置");
       }
@@ -164,6 +172,7 @@ async function handler(req: Request): Promise<Response> {
     }
   }
 
+  // 404
   return new Response("Not Found", { status: 404 });
 }
 
