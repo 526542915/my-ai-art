@@ -1,4 +1,4 @@
-import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
+import { serve } from "https://deno.land/std/http/server.ts";
 
 const API_KEY = Deno.env.get("API_KEY");
 const BASE_URL = Deno.env.get("BASE_URL") || "https://api.openai.com/v1";
