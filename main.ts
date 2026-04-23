@@ -1,6 +1,5 @@
 /**
- * Deno AI 生图网站 - main.ts 版本
- * 安全特性：通过环境变量管理 API Key
+ * Deno AI 生图网站 - 修复版
  */
 
 // --- 配置区域 ---
@@ -89,11 +88,11 @@ const getHTML = () => `
                         resultArea.appendChild(img);
                     };
                 } else {
-                    // 修改点 1：使用 &times; 代替 ×
+                    // 修复点1：使用 &times; 代替特殊字符
                     resultArea.innerHTML = \`<div class="error-msg">&times; 生成失败<br><small>\${data.error}</small></div>\`;
                 }
             } catch (err) {
-                // 修改点 2：使用 &times; 代替 ×
+                // 修复点2：使用 &times; 代替特殊字符
                 resultArea.innerHTML = \`<div class="error-msg">&times; 网络错误<br><small>\${err.message}</small></div>\`;
             } finally {
                 btn.disabled = false;
@@ -124,7 +123,6 @@ async function handler(req: Request): Promise<Response> {
     try {
       const { prompt, model } = await req.json();
 
-      // 安全检查
       if (CONFIG.API_KEY === "sk-你的API密钥") {
          throw new Error("未配置 API_KEY，请在 Deno Deploy 环境变量中设置");
       }
