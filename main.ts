@@ -94,7 +94,7 @@ const getHTML = () => `
                     resultArea.innerHTML = \`<div class="error-msg">&times 生成失败<br><small>\${data.error}</small></div>\`;
                 }
             } catch (err) {
-                resultArea.innerHTML = `<div class="error-msg">&times 网络错误<br><small>\${err.message}</small></div>`;
+                resultArea.innerHTML = `<div class="error-msg">&times; 网络错误<br><small>\${err.message}</small></div>`;
             } finally {
                 btn.disabled = false;
                 btn.innerText = "开始生成";
