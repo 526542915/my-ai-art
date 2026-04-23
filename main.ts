@@ -1,170 +1,179 @@
-// --- START OF FILE main.ts ---
+/**
+ * Deno AI 生图网站 - GitHub 部署专用版
+ * 安全特性：通过环境变量管理 API Key
+ */
 
-import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
-import { serveDir } from "https://deno.land/std@0.224.0/http/file_server.ts";
+// --- 配置区域 ---
+// 优先读取环境变量，如果没有则使用默认值（仅用于测试）
+const CONFIG = {
+  BASE_URL: Deno.env.get("AI_BASE_URL") || "https://你的中转站地址/v1",
+  API_KEY: Deno.env.get("AI_API_KEY") || "sk-你的API密钥",
+  PORT: Number(Deno.env.get("PORT")) || 8000
+};
 
-// --- 辅助函数：创建 JSON 错误响应 ---
-function createJsonErrorResponse(message: string, statusCode = 500) {
-    return new Response(JSON.stringify({ error: message }), {
-        status: statusCode,
-        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
-    });
-}
+// --- HTML 前端页面 ---
+const getHTML = () => `
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 魔法绘图</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background: #f5f5f7; color: #333; }
+        h1 { text-align: center; color: #1d1d1f; margin-bottom: 30px; }
+        .card { background: white; padding: 24px; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
+        textarea { width: 100%; height: 120px; padding: 12px; border: 1px solid #e1e1e1; border-radius: 12px; box-sizing: border-box; font-size: 16px; resize: vertical; outline: none; transition: border-color 0.2s; }
+        textarea:focus { border-color: #007aff; }
+        .controls { margin-top: 20px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+        select { padding: 12px 16px; border-radius: 10px; border: 1px solid #e1e1e1; background: white; font-size: 15px; outline: none; }
+        button { flex: 1; padding: 12px 24px; background: #007aff; color: white; border: none; border-radius: 10px; cursor: pointer; font-size: 16px; font-weight: 600; transition: all 0.2s; min-width: 120px; }
+        button:hover:not(:disabled) { background: #005ecb; transform: translateY(-1px); }
+        button:disabled { background: #ccc; cursor: not-allowed; opacity: 0.7; }
+        .result-area { margin-top: 30px; min-height: 400px; display: flex; align-items: center; justify-content: center; background: #fff; border-radius: 16px; overflow: hidden; border: 2px dashed #e1e1e1; }
+        img { max-width: 100%; height: auto; display: block; }
+        .loading { color: #86868b; font-size: 18px; animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
+        .error-msg { color: #ff3b30; background: #fff0f0; padding: 15px; border-radius: 8px; text-align: center; width: 80%; }
+    </style>
+</head>
+<body>
+    <h1>🎨 AI 绘画工作台</h1>
+    <div class="card">
+        <textarea id="prompt" placeholder="描述你想画的画面，越详细越好...&#10;例如：一只赛博朋克风格的猫，霓虹灯背景，高细节，8k分辨率"></textarea>
+        <div class="controls">
+            <select id="model">
+                <option value="nano-banana-2">Nano Banana 2 (Gemini)</option>
+                <option value="dall-e-3">GPT Image (DALL-E 3)</option>
+            </select>
+            <button id="genBtn" onclick="generateImage()">开始生成</button>
+        </div>
+    </div>
+    <div class="result-area" id="resultArea">
+        <span class="loading">等待指令...</span>
+    </div>
 
-// --- 辅助函数：休眠/等待 ---
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+    <script>
+        async function generateImage() {
+            const promptInput = document.getElementById('prompt');
+            const modelSelect = document.getElementById('model');
+            const btn = document.getElementById('genBtn');
+            const resultArea = document.getElementById('resultArea');
+            
+            const prompt = promptInput.value.trim();
+            const model = modelSelect.value;
 
-// =======================================================
-// 模块 1: OpenRouter API 调用逻辑 (用于 nano banana)
-// =======================================================
-async function callOpenRouter(messages: any[], apiKey: string): Promise<{ type: 'image' | 'text'; content: string }> {
-    if (!apiKey) { throw new Error("callOpenRouter received an empty apiKey."); }
-    const openrouterPayload = { model: "google/gemini-2.5-flash-image-preview", messages };
-    console.log("Sending payload to OpenRouter:", JSON.stringify(openrouterPayload, null, 2));
-    const apiResponse = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST", headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify(openrouterPayload)
-    });
-    if (!apiResponse.ok) {
-        const errorBody = await apiResponse.text();
-        throw new Error(`OpenRouter API error: ${apiResponse.status} ${apiResponse.statusText} - ${errorBody}`);
-    }
-    const responseData = await apiResponse.json();
-    console.log("OpenRouter Response:", JSON.stringify(responseData, null, 2));
-    const message = responseData.choices?.[0]?.message;
-    if (message?.images?.[0]?.image_url?.url) { return { type: 'image', content: message.images[0].image_url.url }; }
-    if (typeof message?.content === 'string' && message.content.startsWith('data:image/')) { return { type: 'image', content: message.content }; }
-    if (typeof message?.content === 'string' && message.content.trim() !== '') { return { type: 'text', content: message.content }; }
-    return { type: 'text', content: "[模型没有返回有效内容]" };
-}
-
-// =======================================================
-// 模块 2: ModelScope API 调用逻辑 (用于 Qwen-Image 等)
-// =======================================================
-// [修改] 函数接收一个 timeoutSeconds 参数
-async function callModelScope(model: string, apikey: string, parameters: any, timeoutSeconds: number): Promise<{ imageUrl: string }> {
-    const base_url = 'https://api-inference.modelscope.cn/';
-    const common_headers = {
-        "Authorization": `Bearer ${apikey}`,
-        "Content-Type": "application/json",
-    };
-    console.log(`[ModelScope] Submitting task for model: ${model}`);
-    const generationResponse = await fetch(`${base_url}v1/images/generations`, {
-        method: "POST",
-        headers: { ...common_headers, "X-ModelScope-Async-Mode": "true" },
-        body: JSON.stringify({ model, ...parameters }),
-    });
-    if (!generationResponse.ok) {
-        const errorBody = await generationResponse.text();
-        throw new Error(`ModelScope API Error (Generation): ${generationResponse.status} - ${errorBody}`);
-    }
-    const { task_id } = await generationResponse.json();
-    if (!task_id) { throw new Error("ModelScope API did not return a task_id."); }
-    console.log(`[ModelScope] Task submitted. Task ID: ${task_id}`);
-    
-    // [修改] 动态计算最大轮询次数
-    const pollingIntervalSeconds = 5;
-    const maxRetries = Math.ceil(timeoutSeconds / pollingIntervalSeconds);
-    console.log(`[ModelScope] Task timeout set to ${timeoutSeconds}s, polling a max of ${maxRetries} times.`);
-
-    for (let i = 0; i < maxRetries; i++) {
-        await sleep(pollingIntervalSeconds * 1000); // 使用变量
-        console.log(`[ModelScope] Polling task status... Attempt ${i + 1}/${maxRetries}`);
-        const statusResponse = await fetch(`${base_url}v1/tasks/${task_id}`, { headers: { ...common_headers, "X-ModelScope-Task-Type": "image_generation" } });
-        if (!statusResponse.ok) {
-            console.error(`[ModelScope] Failed to get task status. Status: ${statusResponse.status}`);
-            continue;
-        }
-        const data = await statusResponse.json();
-        if (data.task_status === "SUCCEED") {
-            console.log("[ModelScope] Task Succeeded.");
-            if (data.output?.images?.[0]?.url) {
-                return { imageUrl: data.output.images[0].url };
-            } else if (data.output_images?.[0]) {
-                return { imageUrl: data.output_images[0] };
-            } else {
-                throw new Error("ModelScope task succeeded but returned no images.");
+            if (!prompt) {
+                promptInput.focus();
+                return alert("请先输入描述词！");
             }
-        } else if (data.task_status === "FAILED") {
-            console.error("[ModelScope] Task Failed.", data);
-            throw new Error(`ModelScope task failed: ${data.message || 'Unknown error'}`);
-        }
-    }
-    throw new Error(`ModelScope task timed out after ${timeoutSeconds} seconds.`);
-}
 
-// =======================================================
-// 主服务逻辑
-// =======================================================
-serve(async (req) => {
-    const pathname = new URL(req.url).pathname;
-    
-    if (req.method === 'OPTIONS') { 
-        return new Response(null, { 
-            status: 204, 
-            headers: { 
-                "Access-Control-Allow-Origin": "*", 
-                "Access-Control-Allow-Methods": "POST, GET, OPTIONS", 
-                "Access-Control-Allow-Headers": "Content-Type, Authorization" 
-            } 
-        }); 
-    }
+            // UI 状态更新
+            btn.disabled = true;
+            btn.innerText = "绘制中...";
+            resultArea.innerHTML = '<span class="loading">正在连接 AI 大脑，请稍候...</span>';
 
-    if (pathname === "/api/key-status") {
-        const isSet = !!Deno.env.get("OPENROUTER_API_KEY");
-        return new Response(JSON.stringify({ isSet }), {
-            headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
-        });
-    }
-
-    if (pathname === "/api/modelscope-key-status") {
-        const isSet = !!Deno.env.get("MODELSCOPE_API_KEY");
-        return new Response(JSON.stringify({ isSet }), {
-            headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
-        });
-    }
-
-    if (pathname === "/generate") {
-        try {
-            // [修改] 从请求体中解构出 timeout
-            const requestData = await req.json();
-            const { model, apikey, prompt, images, parameters, timeout } = requestData;
-
-            if (model === 'nanobanana') {
-                const openrouterApiKey = apikey || Deno.env.get("OPENROUTER_API_KEY");
-                if (!openrouterApiKey) { return createJsonErrorResponse("OpenRouter API key is not set.", 500); }
-                if (!prompt) { return createJsonErrorResponse("Prompt is required.", 400); }
-                const contentPayload: any[] = [{ type: "text", text: prompt }];
-                if (images && Array.isArray(images) && images.length > 0) {
-                    const imageParts = images.map(img => ({ type: "image_url", image_url: { url: img } }));
-                    contentPayload.push(...imageParts);
-                }
-                const webUiMessages = [{ role: "user", content: contentPayload }];
-                const result = await callOpenRouter(webUiMessages, openrouterApiKey);
-                if (result.type === 'image') {
-                    return new Response(JSON.stringify({ imageUrl: result.content }), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } });
-                } else {
-                    return createJsonErrorResponse(`Model returned text instead of an image: "${result.content}"`, 400);
-                }
-            } else {
-                const modelscopeApiKey = apikey || Deno.env.get("MODELSCOPE_API_KEY");
-                if (!modelscopeApiKey) { return createJsonErrorResponse("ModelScope API key is not set.", 401); }
-                if (!parameters?.prompt) { return createJsonErrorResponse("Positive prompt is required for ModelScope models.", 400); }
-                
-                // [修改] 将 timeout (或默认值) 传递给 callModelScope
-                // Qwen 默认2分钟，其他默认3分钟
-                const timeoutSeconds = timeout || (model.includes('Qwen') ? 120 : 180); 
-                const result = await callModelScope(model, modelscopeApiKey, parameters, timeoutSeconds);
-
-                return new Response(JSON.stringify(result), {
-                    headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+            try {
+                const response = await fetch('/api/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt, model })
                 });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    // 创建图片元素，预加载后再显示
+                    const img = new Image();
+                    img.src = data.url;
+                    img.onload = () => {
+                        resultArea.innerHTML = '';
+                        resultArea.appendChild(img);
+                    };
+                } else {
+                    resultArea.innerHTML = \`<div class="error-msg">❌ 生成失败<br><small>\${data.error}</small></div>\`;
+                }
+            } catch (err) {
+                resultArea.innerHTML = `<div class="error-msg">❌ 网络错误<br><small>\${err.message}</small></div>`;
+            } finally {
+                btn.disabled = false;
+                btn.innerText = "开始生成";
             }
-        } catch (error) {
-            console.error("Error handling /generate request:", error);
-            return createJsonErrorResponse(error.message, 500);
         }
-    }
+    </script>
+</body>
+</html>
+`;
 
-    return serveDir(req, { fsRoot: "static", urlRoot: "", showDirListing: true, enableCors: true });
-});
+// --- HTTP 服务器逻辑 ---
+async function handler(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+
+  // 1. 首页
+  if (req.method === "GET" && url.pathname === "/") {
+    return new Response(getHTML(), {
+      headers: { 
+        "content-type": "text/html; charset=utf-8",
+        "Access-Control-Allow-Origin": "*" // 允许跨域
+      },
+    });
+  }
+
+  // 2. API 接口
+  if (req.method === "POST" && url.pathname === "/api/generate") {
+    try {
+      const { prompt, model } = await req.json();
+
+      // 安全检查：如果 Key 还是默认的，直接拒绝
+      if (CONFIG.API_KEY === "sk-你的API密钥") {
+         throw new Error("未配置 API_KEY，请在 Deno Deploy 环境变量中设置");
+      }
+
+      const requestBody = {
+        model: model,
+        prompt: prompt,
+        n: 1,
+        size: "1024x1024",
+        response_format: "url"
+      };
+
+      const apiResponse = await fetch(`${CONFIG.BASE_URL}/images/generations`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${CONFIG.API_KEY}`
+        },
+        body: JSON.stringify(requestBody)
+      });
+
+      const apiData = await apiResponse.json();
+
+      if (apiData.data && apiData.data[0] && apiData.data[0].url) {
+        return new Response(JSON.stringify({
+          success: true,
+          url: apiData.data[0].url
+        }), {
+          headers: { "content-type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+      } else {
+        throw new Error(apiData.error?.message || "上游 API 返回未知错误");
+      }
+
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : "服务器内部错误";
+      return new Response(JSON.stringify({
+        success: false,
+        error: errorMsg
+      }), { 
+        status: 400, 
+        headers: { "content-type": "application/json", "Access-Control-Allow-Origin": "*" } 
+      });
+    }
+  }
+
+  // 404
+  return new Response("Not Found", { status: 404 });
+}
+
+console.log(`🚀 服务启动在 http://localhost:${CONFIG.PORT}`);
+Deno.serve({ port: CONFIG.PORT }, handler);
