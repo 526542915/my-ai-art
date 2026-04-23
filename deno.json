@@ -1,5 +1,5 @@
 {
   "tasks": {
-    "build": "echo 'Build step passed.'"
+    "start": "deno run --allow-net --allow-read index.html"
   }
 }
